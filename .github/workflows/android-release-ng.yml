@@ -1,0 +1,75 @@
+name: Google Play release 2
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  deploy_android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Java
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11.x
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '2.7'
+
+      - name: Decrypt config files
+        run: cd ./android/fastlane/envfiles && chmod +x ./decrypt_secrets.sh && ./decrypt_secrets.sh
+        env:
+          DECRYPTKEY_PLAYSTORE: ${{ secrets.DECRYPTKEY_PLAYSTORE }}
+          DECRYPTKEY_PLAYSTORE_SIGNING_KEY: ${{ secrets.DECRYPTKEY_PLAYSTORE_SIGNING_KEY }}
+          DECRYPTKEY_PROPERTIES: ${{ secrets.DECRYPTKEY_PROPERTIES }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v1
+        with:
+          channel: 'stable'
+          flutter-version: '2.5.x'
+
+      - run: dart --version
+      - run: flutter --version
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Get version information
+        id: get_version
+        run: |
+          echo ::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)
+          echo ::set-output name=BUILD::$(flutter pub run cider version | cut -d '+' -f 2)
+
+
+      - name: Bump version
+        run: |
+          flutter pub run cider version ${{ steps.get_version.outputs.VERSION }}+${{ steps.get_version.outputs.BUILD }}
+          flutter pub run cider bump build
+
+          git config user.name Github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "Bump version to $( flutter pub run cider version )"
+          git push origin HEAD:master
+
+      - name: Build AAB
+        run: flutter build appbundle --release
+        env:
+          WGER_API_KEY: ${{ secrets.WGER_API_KEY }}
+
+      #- name: Run Fastlane
+      #  uses: maierj/fastlane-action@v2.0.0
+      #  with:
+      #    lane: production
+      #    subdirectory: android
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/app/outputs/bundle/release/app-release.aab
